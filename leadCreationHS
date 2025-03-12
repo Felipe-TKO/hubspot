@@ -1,0 +1,43 @@
+import os
+import json
+import requests
+
+def main(event):
+
+    token = os.getenv('token') 
+    contact_id = event.get('inputFields').get('hs_object_id')
+    first = event.get('inputFields').get('firstname') 
+    last = event.get('inputFields').get('lastname')  
+
+    payload = {
+        "properties": {
+            "hs_lead_name": f"{first} {last}",  # The name of the lead
+            "hs_pipeline_stage": "new-stage-id"  # Specify the pipeline stage
+        },
+        "associations": [
+            {
+                "types": [
+                    {
+                        "associationCategory": "HUBSPOT_DEFINED",
+                        "associationTypeId": 578  # The association type ID (make sure it's correct)
+                    }
+                ],
+                "to": {
+                    "id": contact_id # Associate with the contact using the contact ID
+                }
+            }
+        ]
+    }
+
+    # Make the request to HubSpot to create the lead
+    url = "https://api.hubapi.com/crm/v3/objects/leads"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Send the POST request to create the lead
+    response = requests.post(url, headers=headers, json=payload)
+
+   
