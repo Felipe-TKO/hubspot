@@ -1,0 +1,121 @@
+import json
+import http.client
+import urllib.request
+from urllib.error import HTTPError
+
+HUBSPOT_BEARER_TOKEN = "YOUR_BEARER_TOKEN"  # Replace with your actual HubSpot OAuth Bearer token
+HUBSPOT_API_HOST = "api.hubapi.com"
+HUBSPOT_CONTACT_API_PATH = "/crm/v3/objects/contacts/"
+HUBSPOT_LEAD_API_PATH = "/crm/v3/objects/leads"
+
+def lambda_handler(event, context):
+    print("RAW EVENT:", json.dumps(event))  # Log the entire event object
+
+    # Parse the body of the request
+    try:
+        body = json.loads(event.get("body", "[]"))
+    except json.JSONDecodeError:
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON in request body"})
+        }
+    
+    # Extract the objectId and propertyValue
+    if isinstance(body, list) and len(body) > 0:
+        object_id = body[0].get("objectId")
+        property_value = body[0].get("propertyValue")
+
+        # Only proceed if the propertyValue is "true"
+        if property_value != "true":
+            return {
+                "statusCode": 200,
+                "body": json.dumps({"message": "No action taken; propertyValue is not 'true'"})
+            }
+
+        if object_id is None:
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": "objectId not found in payload"})
+            }
+
+        # Get the contact's name
+        contact_name = get_contact_name(object_id)
+
+        if not contact_name:
+            return {
+                "statusCode": 400,
+                "body": json.dumps({"error": "Contact name not found"})
+            }
+
+        # Create the HubSpot lead using the contact name
+        response_data = create_hubspot_lead(contact_name, object_id)
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"objectId": object_id, "hubspot_response": response_data})
+        }
+    
+    return {
+        "statusCode": 400,
+        "body": json.dumps({"error": "Invalid payload"})
+    }
+
+def get_contact_name(contact_id):
+    # Fetch the contact details from HubSpot
+    contact_url = f"https://api.hubapi.com/crm/v3/objects/contacts/{contact_id}?properties=firstname,lastname"
+
+    # Make the request with the Bearer token for authentication
+    try:
+        req = urllib.request.Request(contact_url)
+        req.add_header("Authorization", f"Bearer {HUBSPOT_BEARER_TOKEN}")
+
+        with urllib.request.urlopen(req) as response:
+            contact_data = json.load(response)
+            first_name = contact_data.get("properties", {}).get("firstname", "Unknown")
+            last_name = contact_data.get("properties", {}).get("lastname", "Unknown")
+            return f"{first_name} {last_name}".strip()
+    except HTTPError as e:
+        print(f"Failed to fetch contact details: {e.read().decode()}")
+        return None
+
+def create_hubspot_lead(contact_name, object_id):
+    # Define the payload for creating a lead
+    payload = json.dumps({
+        "associations": [
+            {
+                "types": [
+                    {
+                        "associationCategory": "HUBSPOT_DEFINED",
+                        "associationTypeId": 578  # Association with the contact
+                    }
+                ],
+                "to": {
+                    "id": str(object_id)
+                }
+            }
+        ],
+        "objectWriteTraceId": "string",  # Optional field, replace if needed
+        "properties": {
+            "hs_lead_name": contact_name,
+            "hs_pipeline_stage": "new-stage-id"  # Adjust this to your actual pipeline stage ID
+        }
+    })
+
+    # Set up the connection for HubSpot API
+    connection = http.client.HTTPSConnection(HUBSPOT_API_HOST)
+
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {HUBSPOT_BEARER_TOKEN}"
+    }
+
+    # Make the request to create the lead
+    connection.request("POST", HUBSPOT_LEAD_API_PATH, body=payload, headers=headers)
+    response = connection.getresponse()
+
+    # Read and return the response data
+    response_data = response.read().decode()
+    connection.close()
+
+    return json.loads(response_data)
